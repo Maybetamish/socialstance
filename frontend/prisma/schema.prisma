@@ -1,0 +1,339 @@
+// ========================================
+// SOCIALSTANCE - Database Schema
+// ========================================
+// This file defines all database tables, relationships, and data types
+// Managed by Prisma ORM
+// 
+// Commands:
+// - Generate client: npx prisma generate
+// - Create migration: npx prisma migrate dev --name description
+// - Push to DB: npx prisma db push
+// - View data: npx prisma studio
+
+
+// ========================================
+// PRISMA CONFIGURATION
+// ========================================
+
+generator client {
+  provider = "prisma-client-js"
+  // Generates TypeScript types for database queries
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+
+// ========================================
+// ENUMS (Fixed Choice Fields)
+// ========================================
+
+// User role in the platform
+enum UserRole {
+  INFLUENCER  // Content creators, influencers
+  BRAND       // Companies, brands looking for influencers
+}
+
+// Status of deals between brands and influencers
+enum DealStatus {
+  PENDING      // Waiting for acceptance
+  ACCEPTED     // Deal agreed upon
+  IN_PROGRESS  // Work in progress
+  COMPLETED    // Successfully completed
+  CANCELLED    // Deal cancelled by either party
+}
+
+// Status of brand campaigns
+enum CampaignStatus {
+  DRAFT     // Being created, not published
+  ACTIVE    // Currently running
+  PAUSED    // Temporarily stopped
+  COMPLETED // Campaign finished
+}
+
+
+// ========================================
+// AUTHENTICATION MODELS (NextAuth)
+// ========================================
+// These tables are required by NextAuth for authentication
+
+// Main user table - stores all users (both influencers and brands)
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique           // Unique email address
+  name          String?                     // Full name
+  password      String?                     // Hashed password (bcrypt)
+  role          UserRole                    // INFLUENCER or BRAND
+  image         String?                     // Profile picture URL
+  emailVerified DateTime?                   // Email verification timestamp
+  createdAt     DateTime  @default(now())  // Account creation date
+  updatedAt     DateTime  @updatedAt        // Last update date
+  
+  // Relationships
+  accounts      Account[]           // OAuth accounts (Google, etc.)
+  sessions      Session[]           // Active login sessions
+  influencer    InfluencerProfile?  // Influencer profile (if role=INFLUENCER)
+  brand         BrandProfile?       // Brand profile (if role=BRAND)
+  deals         Deal[]              // Deals created by this user
+  notifications Notification[]      // User notifications
+}
+
+// OAuth provider accounts (Google, Facebook, etc.)
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String  // "oauth" | "email" | "credentials"
+  provider          String  // "google" | "facebook" | etc.
+  providerAccountId String  // ID from the provider
+  refresh_token     String? // OAuth refresh token
+  access_token      String? // OAuth access token
+  expires_at        Int?    // Token expiration timestamp
+  token_type        String? // "Bearer" | etc.
+  scope             String? // OAuth scopes granted
+  id_token          String? // OpenID Connect ID token
+  session_state     String? // OAuth session state
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+// User login sessions
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique        // Unique session identifier
+  userId       String
+  expires      DateTime                // Session expiration
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Email verification tokens
+model VerificationToken {
+  identifier String   // Email or user ID
+  token      String   @unique  // Verification code
+  expires    DateTime           // Token expiration
+
+  @@unique([identifier, token])
+}
+
+
+// ========================================
+// INFLUENCER MODELS
+// ========================================
+
+// Detailed profile for influencers/content creators
+model InfluencerProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Social Media Accounts
+  instagramHandle String?  // Instagram username (without @)
+  twitterHandle   String?  // Twitter/X username
+  tiktokHandle    String?  // TikTok username
+  youtubeChannel  String?  // YouTube channel name/ID
+  
+  // Metrics (aggregated from all platforms)
+  followers       Json?    // {"instagram": 125000, "twitter": 45000, ...}
+  engagementRate  Float    @default(0)  // Average engagement % across platforms
+  authenticityScore Int    @default(0)  // 0-100 fraud detection score
+  
+  // Profile Information
+  bio             String?  // About the influencer
+  portfolio       Media[]  // Portfolio images/videos
+  mediaKit        MediaKit? // Generated media kit
+  
+  // Preferences
+  niches          String[] // ["Fashion", "Lifestyle", "Tech", ...]
+  location        String?  // City, Country
+  minDealAmount   Float?   // Minimum collaboration budget
+  
+  // System Fields
+  lastScraped     DateTime? // Last time social data was fetched
+  verified        Boolean  @default(false) // Platform verification badge
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relationships
+  socialMetrics   SocialMetrics[]      // Historical social media data
+  fraudLogs       FraudDetectionLog[]  // Fraud detection analyses
+  dealsAsInfluencer Deal[] @relation("InfluencerDeals")
+}
+
+// Social media metrics history
+// Stores snapshots of follower counts, engagement, etc.
+model SocialMetrics {
+  id              String   @id @default(cuid())
+  influencerId    String
+  influencer      InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  platform        String   // "instagram" | "twitter" | "tiktok" | "youtube"
+  metrics         Json     // Raw metrics from API: {followers, engagement_rate, posts, ...}
+  fetchedAt       DateTime @default(now())  // When this data was collected
+  
+  @@index([influencerId, platform])
+}
+
+// Fraud detection analysis logs
+// AI-powered fraud detection results
+model FraudDetectionLog {
+  id              String   @id @default(cuid())
+  influencerId    String
+  influencer      InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  analysis        Json     // Detailed analysis: {followerGrowth, engagementPattern, ...}
+  overallScore    Int      // 0-100 authenticity score (higher = more authentic)
+  flags           String[] // ["Sudden follower spike", "Bot-like engagement", ...]
+  analyzedAt      DateTime @default(now())
+  
+  @@index([influencerId])
+}
+
+// Media files (portfolio items, campaign content)
+model Media {
+  id              String   @id @default(cuid())
+  influencerId    String
+  influencer      InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  dealId          String?  // Associated deal (if campaign content)
+  deal            Deal?    @relation(fields: [dealId], references: [id])
+  
+  type            String   // "image" | "video"
+  url             String   // File URL (S3, Cloudinary, etc.)
+  caption         String?  // Description
+  platform        String?  // Where it was posted
+  engagementCount Int?     // Likes, views, etc.
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([influencerId])
+}
+
+// Auto-generated media kit (influencer portfolio)
+model MediaKit {
+  id              String   @id @default(cuid())
+  influencerId    String   @unique
+  influencer      InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  
+  html            String   // Generated HTML content
+  pdfUrl          String?  // PDF download URL
+  template        String   // Template name used
+  views           Int      @default(0)  // Number of times viewed
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+
+// ========================================
+// BRAND MODELS
+// ========================================
+
+// Detailed profile for brands/companies
+model BrandProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Company Information
+  companyName     String   // Brand/company name
+  website         String?  // Company website URL
+  industry        String[] // ["Fashion", "Tech", "Food", ...]
+  budget          Float?   // Total marketing budget
+  description     String?  // About the brand
+  
+  // Relationships
+  campaigns       Campaign[]  // Marketing campaigns
+  dealsAsBrand    Deal[]   @relation("BrandDeals")
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Marketing campaigns created by brands
+model Campaign {
+  id              String   @id @default(cuid())
+  brandId         String
+  brand           BrandProfile @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  
+  // Campaign Details
+  name            String   // Campaign name
+  description     String?  // Campaign description
+  objectives      String?  // Goals and objectives
+  budget          Float    // Total budget allocated
+  targetAudience  Json?    // {"age": "18-35", "location": "US", ...}
+  deliverables    Json?    // {"posts": 3, "stories": 5, "videos": 1, ...}
+  contentGuidelines String? // Content dos and don'ts
+  timeline        Json?    // {"start": "2024-01-01", "end": "2024-03-31", ...}
+  status          CampaignStatus @default(DRAFT)
+  
+  // Relationships
+  deals           Deal[]   // Deals with influencers for this campaign
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([brandId])
+}
+
+
+// ========================================
+// COLLABORATION MODELS
+// ========================================
+
+// Deals/contracts between brands and influencers
+model Deal {
+  id              String   @id @default(cuid())
+  
+  // Parties Involved
+  brandId         String
+  brand           BrandProfile @relation("BrandDeals", fields: [brandId], references: [id], onDelete: Cascade)
+  influencerId    String
+  influencer      InfluencerProfile @relation("InfluencerDeals", fields: [influencerId], references: [id], onDelete: Cascade)
+  campaignId      String?  // Optional: part of a campaign
+  campaign        Campaign? @relation(fields: [campaignId], references: [id])
+  userId          String   // For NextAuth relation
+  user            User     @relation(fields: [userId], references: [id])
+  
+  // Deal Terms
+  status          DealStatus @default(PENDING)
+  budget          Float    // Payment amount
+  commission      Float?   // Platform commission (if any)
+  deliverables    Json?    // What influencer needs to deliver
+  terms           String?  // Contract terms and conditions
+  
+  // Content
+  content         Media[]  // Submitted content for this deal
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  completedAt     DateTime? // When deal was completed
+  
+  @@index([brandId])
+  @@index([influencerId])
+  @@index([userId])
+}
+
+
+// ========================================
+// NOTIFICATION SYSTEM
+// ========================================
+
+// In-app notifications for users
+model Notification {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Notification Content
+  title           String   // Notification headline
+  message         String   // Notification body
+  type            String   // "deal" | "payment" | "message" | "system"
+  read            Boolean  @default(false)  // Read/unread status
+  link            String?  // URL to navigate when clicked
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([userId])
+}

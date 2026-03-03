@@ -1,0 +1,53 @@
+import { NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
+import bcrypt from 'bcrypt'
+
+export async function POST(request: Request) {
+  try {
+    const { email, password } = await request.json()
+    
+    console.log('🧪 TEST LOGIN - Email:', email)
+    
+    const prismaClient = await prisma
+    const user = await prismaClient.user.findUnique({
+      where: { email },
+    })
+    
+    if (!user) {
+      return NextResponse.json({ 
+        error: 'User not found',
+        email 
+      }, { status: 404 })
+    }
+    
+    if (!user.password) {
+      return NextResponse.json({ 
+        error: 'No password set',
+      }, { status: 400 })
+    }
+    
+    const isValid = await bcrypt.compare(password, user.password)
+    
+    if (!isValid) {
+      return NextResponse.json({ 
+        error: 'Invalid password' 
+      }, { status: 401 })
+    }
+    
+    return NextResponse.json({ 
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      }
+    })
+    
+  } catch (error: any) {
+    console.error('Test login error:', error)
+    return NextResponse.json({ 
+      error: error.message 
+    }, { status: 500 })
+  }
+}
